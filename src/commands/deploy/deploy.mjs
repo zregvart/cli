@@ -63,20 +63,24 @@ const triggerDeploy = async ({ api, options, siteData, siteId }) => {
 }
 
 /**
- * g
+ * Retrieves the folder containing the static files that need to be deployed
  * @param {object} config
- * @param {string} config.workingDir The process working directory
+ * @param {import('../base-command.mjs').default} config.command The process working directory
  * @param {object} config.config
  * @param {import('commander').OptionValues} config.options
  * @param {object} config.site
  * @param {object} config.siteData
  * @returns {Promise<string>}
  */
-const getDeployFolder = async ({ config, options, site, siteData, workingDir }) => {
-  console.log()
+const getDeployFolder = async ({ command, config, options, site, siteData }) => {
   let deployFolder
+  // if the `--dir .` flag is provided we should resolve it to the working directory.
+  // - in regular sites this is the `process.cwd`
+  // - in mono repositories this will be the root of the jsWorkspace
   if (options.dir) {
-    deployFolder = resolve(site.root, options.dir)
+    deployFolder = command.workspacePackage
+      ? resolve(command.jsWorkspaceRoot || site.root, options.dir)
+      : resolve(command.workingDir, options.dir)
   } else if (config?.build?.publish) {
     deployFolder = resolve(site.root, config.build.publish)
   } else if (siteData?.build_settings?.dir) {
@@ -91,7 +95,7 @@ const getDeployFolder = async ({ config, options, site, siteData, workingDir }) 
         name: 'promptPath',
         message: 'Publish directory',
         default: '.',
-        filter: (input) => resolve(workingDir, input),
+        filter: (input) => resolve(command.workingDir, input),
       },
     ])
     deployFolder = promptPath
@@ -471,12 +475,13 @@ const bundleEdgeFunctions = async (options, command) => {
  *
  * @param {object} config
  * @param {boolean} config.deployToProduction
+ * @param {boolean} config.isIntegrationDeploy If the user ran netlify integration:deploy instead of just netlify deploy
  * @param {boolean} config.json If the result should be printed as json message
  * @param {boolean} config.runBuildCommand If the build command should be run
  * @param {object} config.results
  * @returns {void}
  */
-const printResults = ({ deployToProduction, json, results, runBuildCommand }) => {
+const printResults = ({ deployToProduction, isIntegrationDeploy, json, results, runBuildCommand }) => {
   const msgData = {
     'Build logs': results.logsUrl,
     'Function logs': results.functionLogsUrl,
@@ -514,7 +519,11 @@ const printResults = ({ deployToProduction, json, results, runBuildCommand }) =>
     if (!deployToProduction) {
       log()
       log('If everything looks good on your draft URL, deploy it to your main site URL with the --prod flag.')
-      log(`${chalk.cyanBright.bold(`netlify deploy${runBuildCommand ? ' --build' : ''} --prod`)}`)
+      log(
+        `${chalk.cyanBright.bold(
+          `netlify ${isIntegrationDeploy ? 'integration:' : ''}deploy${runBuildCommand ? ' --build' : ''} --prod`,
+        )}`,
+      )
       log()
     }
   }
@@ -525,7 +534,7 @@ const printResults = ({ deployToProduction, json, results, runBuildCommand }) =>
  * @param {import('commander').OptionValues} options
  * @param {import('../base-command.mjs').default} command
  */
-const deploy = async (options, command) => {
+export const deploy = async (options, command) => {
   const { workingDir } = command
   const { api, site, siteInfo } = command.netlify
   const alias = options.alias || options.branch
@@ -599,7 +608,7 @@ const deploy = async (options, command) => {
   })
   const config = newConfig || command.netlify.config
 
-  const deployFolder = await getDeployFolder({ workingDir, options, config, site, siteData })
+  const deployFolder = await getDeployFolder({ command, options, config, site, siteData })
   const functionsFolder = getFunctionsFolder({ workingDir, options, config, site, siteData })
   const { configPath } = site
   const edgeFunctionsConfig = command.netlify.config.edge_functions
@@ -671,8 +680,11 @@ const deploy = async (options, command) => {
   // @ts-ignore
   await restoreConfig(configMutations, { buildDir: deployFolder, configPath, redirectsPath })
 
+  const isIntegrationDeploy = command.name() === 'integration:deploy'
+
   printResults({
     runBuildCommand: options.build,
+    isIntegrationDeploy,
     json: options.json,
     results,
     deployToProduction,

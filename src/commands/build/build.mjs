@@ -9,9 +9,11 @@ import { getEnvelopeEnv, normalizeContext } from '../../utils/env/index.mjs'
 /**
  * @param {import('../../lib/build.mjs').BuildConfig} options
  */
-const checkOptions = ({ cachedConfig: { siteInfo = {} }, token }) => {
+export const checkOptions = ({ cachedConfig: { siteInfo = {} }, token }) => {
   if (!siteInfo.id) {
-    error('Could not find the site ID. Please run netlify link.')
+    error(
+      'Could not find the site ID. If your site is not on Netlify, please run `netlify init` or `netlify deploy` first. If it is, please run `netlify link`.',
+    )
   }
 
   if (!token) {
@@ -72,7 +74,7 @@ const build = async (options, command) => {
 export const createBuildCommand = (program) =>
   program
     .command('build')
-    .description('(Beta) Build on your local machine')
+    .description('Build on your local machine')
     .option(
       '--context <context>',
       'Specify a build context or branch (contexts: "production", "deploy-preview", "branch-deploy", "dev")',

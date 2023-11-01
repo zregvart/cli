@@ -27,11 +27,12 @@ import {
   isEdgeFunctionsRequest,
 } from '../lib/edge-functions/proxy.mjs'
 import { fileExistsAsync, isFileAsync } from '../lib/fs.mjs'
+import { DEFAULT_FUNCTION_URL_EXPRESSION } from '../lib/functions/registry.mjs'
 import renderErrorTemplate from '../lib/render-error-template.mjs'
 
 import { NETLIFYDEVLOG, NETLIFYDEVWARN, log, chalk } from './command-helpers.mjs'
 import createStreamPromise from './create-stream-promise.mjs'
-import { headersForPath, parseHeaders, NFFunctionName, NFRequestID } from './headers.mjs'
+import { headersForPath, parseHeaders, NFFunctionName, NFRequestID, NFFunctionRoute } from './headers.mjs'
 import { generateRequestID } from './request-id.mjs'
 import { createRewriter, onChanges } from './rules-proxy.mjs'
 import { signRedirect } from './sign-redirect.mjs'
@@ -87,7 +88,7 @@ function isInternal(url) {
  * @param {string} url
  */
 function isFunction(functionsPort, url) {
-  return functionsPort && url.match(/^\/.netlify\/(functions|builders)\/.+/)
+  return functionsPort && url.match(DEFAULT_FUNCTION_URL_EXPRESSION)
 }
 
 /**
@@ -328,12 +329,12 @@ const serveRedirect = async function ({ env, functionsRegistry, match, options, 
       return proxy.web(req, res, { target: options.functionsServer })
     }
 
-    const functionWithCustomRoute = functionsRegistry && (await functionsRegistry.getFunctionForURLPath(destURL))
+    const matchingFunction = functionsRegistry && (await functionsRegistry.getFunctionForURLPath(destURL, req.method))
     const destStaticFile = await getStatic(dest.pathname, options.publicFolder)
     let statusValue
     if (
       match.force ||
-      (!staticFile && ((!options.framework && destStaticFile) || isInternal(destURL) || functionWithCustomRoute))
+      (!staticFile && ((!options.framework && destStaticFile) || isInternal(destURL) || matchingFunction))
     ) {
       req.url = destStaticFile ? destStaticFile + dest.search : destURL
       const { status } = match
@@ -341,8 +342,13 @@ const serveRedirect = async function ({ env, functionsRegistry, match, options, 
       console.log(`${NETLIFYDEVLOG} Rewrote URL to`, req.url)
     }
 
-    if (isFunction(options.functionsPort, req.url) || functionWithCustomRoute) {
-      const functionHeaders = functionWithCustomRoute ? { [NFFunctionName]: functionWithCustomRoute.name } : {}
+    if (matchingFunction) {
+      const functionHeaders = matchingFunction.func
+        ? {
+            [NFFunctionName]: matchingFunction.func?.name,
+            [NFFunctionRoute]: matchingFunction.route,
+          }
+        : {}
       const url = reqToURL(req, originalURL)
       req.headers['x-netlify-original-pathname'] = url.pathname
       req.headers['x-netlify-original-search'] = url.search
@@ -541,7 +547,7 @@ const initializeProxy = async function ({ configPath, distDir, env, host, port, 
 
       if (isEdgeFunctionsRequest(req) && isUncaughtError) {
         const acceptsHtml = req.headers && req.headers.accept && req.headers.accept.includes('text/html')
-        const decompressedBody = await decompressResponseBody(responseBody, req.headers['content-encoding'])
+        const decompressedBody = await decompressResponseBody(responseBody, proxyRes.headers['content-encoding'])
         const formattedBody = formatEdgeFunctionError(decompressedBody, acceptsHtml)
         const errorResponse = acceptsHtml
           ? await renderErrorTemplate(formattedBody, './templates/function-error.html', 'edge function')
@@ -594,18 +600,21 @@ const onRequest = async (
     return proxy.web(req, res, { target: edgeFunctionsProxyURL })
   }
 
-  // Does the request match a function on the fixed URL path?
-  if (isFunction(settings.functionsPort, req.url)) {
-    return proxy.web(req, res, { target: functionsServer })
-  }
-
-  // Does the request match a function on a custom URL path?
-  const functionMatch = functionsRegistry ? await functionsRegistry.getFunctionForURLPath(req.url) : null
+  const functionMatch = functionsRegistry && (await functionsRegistry.getFunctionForURLPath(req.url, req.method))
 
   if (functionMatch) {
     // Setting an internal header with the function name so that we don't
     // have to match the URL again in the functions server.
-    const headers = { [NFFunctionName]: functionMatch.name }
+    /** @type {Record<string, string>} */
+    const headers = {}
+
+    if (functionMatch.func) {
+      headers[NFFunctionName] = functionMatch.func.name
+    }
+
+    if (functionMatch.route) {
+      headers[NFFunctionRoute] = functionMatch.route.pattern
+    }
 
     return proxy.web(req, res, { headers, target: functionsServer })
   }
@@ -655,7 +664,7 @@ const onRequest = async (
 }
 
 /**
- * @param {import('./types.js').ServerSettings} settings
+ * @param {Pick<import('./types.js').ServerSettings, "https" | "port">} settings
  * @returns
  */
 export const getProxyUrl = function (settings) {
@@ -666,6 +675,7 @@ export const getProxyUrl = function (settings) {
 export const startProxy = async function ({
   accountId,
   addonsUrls,
+  blobsContext,
   config,
   configPath,
   debug,
@@ -684,6 +694,7 @@ export const startProxy = async function ({
   const secondaryServerPort = settings.https ? await getAvailablePort() : null
   const functionsServer = settings.functionsPort ? `http://127.0.0.1:${settings.functionsPort}` : null
   const edgeFunctionsProxy = await initializeEdgeFunctionsProxy({
+    blobsContext,
     config,
     configPath,
     debug,
@@ -695,6 +706,7 @@ export const startProxy = async function ({
     mainPort: settings.port,
     offline,
     passthroughPort: secondaryServerPort || settings.port,
+    settings,
     projectDir,
     siteInfo,
     accountId,

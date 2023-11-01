@@ -1,13 +1,21 @@
 // @ts-check
 import { Buffer } from 'buffer'
+import { promises as fs } from 'fs'
+import path from 'path'
 
 import express from 'express'
 import expressLogging from 'express-logging'
 import jwtDecode from 'jwt-decode'
 
 import { NETLIFYDEVERR, NETLIFYDEVLOG, error as errorExit, log } from '../../utils/command-helpers.mjs'
-import { CLOCKWORK_USERAGENT, getFunctionsDistPath, getInternalFunctionsDir } from '../../utils/functions/index.mjs'
-import { NFFunctionName } from '../../utils/headers.mjs'
+import { isFeatureFlagEnabled } from '../../utils/feature-flags.mjs'
+import {
+  CLOCKWORK_USERAGENT,
+  getFunctionsDistPath,
+  getFunctionsServePath,
+  getInternalFunctionsDir,
+} from '../../utils/functions/index.mjs'
+import { NFFunctionName, NFFunctionRoute } from '../../utils/headers.mjs'
 import { headers as efHeaders } from '../edge-functions/headers.mjs'
 import { getGeoLocation } from '../geo-location.mjs'
 
@@ -56,11 +64,13 @@ export const createHandler = function (options) {
   const { functionsRegistry } = options
 
   return async function handler(request, response) {
-    // If this header is set, it means we've already matched a function and we
+    // If these headers are set, it means we've already matched a function and we
     // can just grab its name directly. We delete the header from the request
     // because we don't want to expose it to user code.
     let functionName = request.header(NFFunctionName)
     delete request.headers[NFFunctionName]
+    const functionRoute = request.header(NFFunctionRoute)
+    delete request.headers[NFFunctionRoute]
 
     // If we didn't match a function with a custom route, let's try to match
     // using the fixed URL format.
@@ -127,6 +137,7 @@ export const createHandler = function (options) {
       'client-ip': [remoteAddress],
       'x-nf-client-connection-ip': [remoteAddress],
       'x-nf-account-id': [options.accountId],
+      'x-nf-site-id': [options?.siteInfo?.id],
       [efHeaders.Geo]: Buffer.from(JSON.stringify(geoLocation)).toString('base64'),
     }).reduce((prev, [key, value]) => ({ ...prev, [key]: Array.isArray(value) ? value : [value] }), {})
     const rawQuery = new URLSearchParams(requestQuery).toString()
@@ -148,6 +159,7 @@ export const createHandler = function (options) {
       isBase64Encoded,
       rawUrl,
       rawQuery,
+      route: functionRoute,
     }
 
     const clientContext = buildClientContext(request.headers) || {}
@@ -234,6 +246,7 @@ const getFunctionsServer = (options) => {
 /**
  *
  * @param {object} options
+ * @param {import("../blobs/blobs.mjs").BlobsContext} options.blobsContext
  * @param {import('../../commands/base-command.mjs').default} options.command
  * @param {*} options.capabilities
  * @param {*} options.config
@@ -241,14 +254,28 @@ const getFunctionsServer = (options) => {
  * @param {*} options.loadDistFunctions
  * @param {*} options.settings
  * @param {*} options.site
+ * @param {*} options.siteInfo
  * @param {string} options.siteUrl
  * @param {*} options.timeouts
  * @returns {Promise<import('./registry.mjs').FunctionsRegistry | undefined>}
  */
 export const startFunctionsServer = async (options) => {
-  const { capabilities, command, config, debug, loadDistFunctions, settings, site, siteUrl, timeouts } = options
+  const {
+    blobsContext,
+    capabilities,
+    command,
+    config,
+    debug,
+    loadDistFunctions,
+    settings,
+    site,
+    siteInfo,
+    siteUrl,
+    timeouts,
+  } = options
   const internalFunctionsDir = await getInternalFunctionsDir({ base: site.root })
   const functionsDirectories = []
+  let manifest
 
   // If the `loadDistFunctions` parameter is sent, the functions server will
   // use the built functions created by zip-it-and-ship-it rather than building
@@ -258,6 +285,18 @@ export const startFunctionsServer = async (options) => {
 
     if (distPath) {
       functionsDirectories.push(distPath)
+
+      // When using built functions, read the manifest file so that we can
+      // extract metadata such as routes and API version.
+      try {
+        const manifestPath = path.join(distPath, 'manifest.json')
+        // eslint-disable-next-line unicorn/prefer-json-parse-buffer
+        const data = await fs.readFile(manifestPath, 'utf8')
+
+        manifest = JSON.parse(data)
+      } catch {
+        // no-op
+      }
     }
   } else {
     // The order of the function directories matters. Rightmost directories take
@@ -267,15 +306,26 @@ export const startFunctionsServer = async (options) => {
     functionsDirectories.push(...sourceDirectories)
   }
 
+  try {
+    const functionsServePath = getFunctionsServePath({ base: site.root })
+
+    await fs.rm(functionsServePath, { force: true, recursive: true })
+  } catch {
+    // no-op
+  }
+
   if (functionsDirectories.length === 0) {
     return
   }
 
   const functionsRegistry = new FunctionsRegistry({
+    blobsContext,
     capabilities,
     config,
     debug,
     isConnected: Boolean(siteUrl),
+    logLambdaCompat: isFeatureFlagEnabled('cli_log_lambda_compat', siteInfo),
+    manifest,
     // functions always need to be inside the packagePath if set inside a monorepo
     projectRoot: command.workingDir,
     settings,

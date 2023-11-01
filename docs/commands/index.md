@@ -39,11 +39,11 @@ Run any Netlify API method
 
 ### [build](/docs/commands/build.md)
 
-(Beta) Build on your local machine
+Build on your local machine
 
 ### [completion](/docs/commands/completion.md)
 
-(Beta) Generate shell completion script
+Generate shell completion script
 
 | Subcommand | description  |
 |:--------------------------- |:-----|
@@ -94,20 +94,18 @@ Manage netlify functions
 
 Configure continuous deployment for a new or existing site. To create a new site without continuous deployment, use `netlify sites:create`
 
-### [link](/docs/commands/link.md)
+### [integration](/docs/commands/integration.md)
 
-Link a local repo or project folder to an existing site on Netlify
-
-### [lm](/docs/commands/lm.md)
-
-Handle Netlify Large Media operations
+Manage Netlify Integrations built with the Netlify SDK
 
 | Subcommand | description  |
 |:--------------------------- |:-----|
-| [`lm:info`](/docs/commands/lm.md#lminfo) | Show large media requirements information.  |
-| [`lm:install`](/docs/commands/lm.md#lminstall) | Configures your computer to use Netlify Large Media  |
-| [`lm:setup`](/docs/commands/lm.md#lmsetup) | Configures your site to use Netlify Large Media  |
+| [`integration:deploy`](/docs/commands/integration.md#integrationdeploy) | Register, build, and deploy a private integration on Netlify  |
 
+
+### [link](/docs/commands/link.md)
+
+Link a local repo or project folder to an existing site on Netlify
 
 ### [login](/docs/commands/login.md)
 
@@ -125,16 +123,16 @@ Open settings for the site linked to the current folder
 
 ### [recipes](/docs/commands/recipes.md)
 
-(Beta) Create and modify files in a project using pre-defined recipes
+Create and modify files in a project using pre-defined recipes
 
 | Subcommand | description  |
 |:--------------------------- |:-----|
-| [`recipes:list`](/docs/commands/recipes.md#recipeslist) | (Beta) List the recipes available to create and modify files in a project  |
+| [`recipes:list`](/docs/commands/recipes.md#recipeslist) | List the recipes available to create and modify files in a project  |
 
 
 ### [serve](/docs/commands/serve.md)
 
-(Beta) Build the site for production and serve locally. This does not watch the code for changes, so if you need to rebuild your site then you must exit and run `serve` again.
+Build the site for production and serve locally. This does not watch the code for changes, so if you need to rebuild your site then you must exit and run `serve` again.
 
 ### [sites](/docs/commands/sites.md)
 

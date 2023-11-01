@@ -1,4 +1,6 @@
 // @ts-check
+import { Buffer } from 'buffer'
+import { basename, extname } from 'path'
 import { version as nodeVersion } from 'process'
 
 import CronParser from 'cron-parser'
@@ -7,6 +9,7 @@ import semver from 'semver'
 import { error as errorExit } from '../../utils/command-helpers.mjs'
 import { BACKGROUND } from '../../utils/functions/get-functions.mjs'
 
+const TYPESCRIPT_EXTENSIONS = new Set(['.cts', '.mts', '.ts'])
 const V2_MIN_NODE_VERSION = '18.0.0'
 
 // Returns a new set with all elements of `setA` that don't exist in `setB`.
@@ -21,6 +24,7 @@ const getNextRun = function (schedule) {
 
 export default class NetlifyFunction {
   constructor({
+    blobsContext,
     config,
     directory,
     displayName,
@@ -32,6 +36,7 @@ export default class NetlifyFunction {
     timeoutBackground,
     timeoutSynchronous,
   }) {
+    this.blobsContext = blobsContext
     this.buildError = null
     this.config = config
     this.directory = directory
@@ -57,6 +62,35 @@ export default class NetlifyFunction {
     this.srcFiles = new Set()
   }
 
+  get filename() {
+    if (!this.buildData?.mainFile) {
+      return null
+    }
+
+    return basename(this.buildData.mainFile)
+  }
+
+  getRecommendedExtension() {
+    if (this.buildData?.runtimeAPIVersion !== 2) {
+      return
+    }
+
+    const extension = this.buildData?.mainFile ? extname(this.buildData.mainFile) : undefined
+    const moduleFormat = this.buildData?.outputModuleFormat
+
+    if (moduleFormat === 'esm') {
+      return
+    }
+
+    if (extension === '.ts') {
+      return '.mts'
+    }
+
+    if (extension === '.js') {
+      return '.mjs'
+    }
+  }
+
   hasValidName() {
     // same as https://github.com/netlify/bitballoon/blob/fbd7881e6c8e8c48e7a0145da4ee26090c794108/app/models/deploy.rb#L482
     // eslint-disable-next-line unicorn/better-regex
@@ -71,6 +105,14 @@ export default class NetlifyFunction {
 
   isSupported() {
     return !(this.buildData?.runtimeAPIVersion === 2 && semver.lt(nodeVersion, V2_MIN_NODE_VERSION))
+  }
+
+  isTypeScript() {
+    if (this.filename === null) {
+      return false
+    }
+
+    return TYPESCRIPT_EXTENSIONS.has(extname(this.filename))
   }
 
   async getNextRun() {
@@ -111,7 +153,7 @@ export default class NetlifyFunction {
         throw new Error(
           `Function requires Node.js version ${V2_MIN_NODE_VERSION} or above, but ${nodeVersion.slice(
             1,
-          )} is installed. Refer to https://ntl.fyi/functions-node18 for information on how to update.`,
+          )} is installed. Refer to https://ntl.fyi/functions-runtime for information on how to update.`,
         )
       }
 
@@ -121,6 +163,12 @@ export default class NetlifyFunction {
 
       return { error }
     }
+  }
+
+  async getBuildData() {
+    await this.buildQueue
+
+    return this.buildData
   }
 
   // Compares a new set of source files against a previous one, returning an
@@ -136,7 +184,7 @@ export default class NetlifyFunction {
   }
 
   // Invokes the function and returns its response object.
-  async invoke(event, context) {
+  async invoke(event, context = {}) {
     await this.buildQueue
 
     if (this.buildError) {
@@ -144,10 +192,24 @@ export default class NetlifyFunction {
     }
 
     const timeout = this.isBackground ? this.timeoutBackground : this.timeoutSynchronous
+    const environment = {}
+
+    if (this.blobsContext) {
+      const payload = JSON.stringify({
+        url: this.blobsContext.edgeURL,
+        token: this.blobsContext.token,
+      })
+
+      context.custom = {
+        ...context?.custom,
+        blobs: Buffer.from(payload).toString('base64'),
+      }
+    }
 
     try {
       const result = await this.runtime.invokeFunction({
         context,
+        environment,
         event,
         func: this,
         timeout,
@@ -158,12 +220,23 @@ export default class NetlifyFunction {
     }
   }
 
-  async matchURLPath(rawPath) {
+  /**
+   * Matches all routes agains the incoming request. If a match is found, then the matched route is returned.
+   * @param {string} rawPath
+   * @param {string} method
+   * @returns matched route
+   */
+  async matchURLPath(rawPath, method) {
     await this.buildQueue
 
-    const path = (rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath).toLowerCase()
+    let path = rawPath !== '/' && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath
+    path = path.toLowerCase()
     const { routes = [] } = this.buildData
-    const isMatch = routes.some(({ expression, literal }) => {
+    return routes.find(({ expression, literal, methods }) => {
+      if (methods.length !== 0 && !methods.includes(method)) {
+        return false
+      }
+
       if (literal !== undefined) {
         return path === literal
       }
@@ -176,8 +249,10 @@ export default class NetlifyFunction {
 
       return false
     })
+  }
 
-    return isMatch
+  get runtimeAPIVersion() {
+    return this.buildData?.runtimeAPIVersion ?? 1
   }
 
   get url() {

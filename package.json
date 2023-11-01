@@ -1,11 +1,11 @@
 {
   "name": "netlify-cli",
   "description": "Netlify command line tool",
-  "version": "16.1.0",
+  "version": "17.0.0",
   "author": "Netlify Inc.",
   "type": "module",
   "engines": {
-    "node": ">=16.16.0"
+    "node": ">=18.18.2"
   },
   "files": [
     "/bin",
@@ -78,13 +78,13 @@
   "dependencies": {
     "@bugsnag/js": "7.20.2",
     "@fastify/static": "6.10.2",
-    "@netlify/build": "29.20.6",
-    "@netlify/build-info": "7.7.3",
-    "@netlify/config": "20.8.0",
-    "@netlify/edge-bundler": "8.18.0",
+    "@netlify/blobs": "^4.0.0",
+    "@netlify/build": "29.23.4",
+    "@netlify/build-info": "7.10.1",
+    "@netlify/config": "20.9.0",
+    "@netlify/edge-bundler": "9.4.1",
     "@netlify/local-functions-proxy": "1.1.1",
-    "@netlify/serverless-functions-api": "1.7.3",
-    "@netlify/zip-it-and-ship-it": "9.16.0",
+    "@netlify/zip-it-and-ship-it": "9.25.4",
     "@octokit/rest": "19.0.13",
     "ansi-escapes": "6.2.0",
     "ansi-styles": "6.2.1",
@@ -138,9 +138,10 @@
     "is-stream": "3.0.0",
     "is-wsl": "2.2.0",
     "isexe": "2.0.0",
+    "js-yaml": "^4.1.0",
     "jsonwebtoken": "9.0.1",
     "jwt-decode": "3.1.2",
-    "lambda-local": "2.1.1",
+    "lambda-local": "2.1.2",
     "listr": "0.14.3",
     "locate-path": "7.2.0",
     "lodash": "4.17.21",
@@ -151,7 +152,7 @@
     "netlify": "13.1.10",
     "netlify-headers-parser": "7.1.2",
     "netlify-redirect-parser": "14.2.0",
-    "netlify-redirector": "0.4.0",
+    "netlify-redirector": "0.5.0",
     "node-fetch": "2.6.12",
     "node-version-alias": "3.4.1",
     "ora": "6.3.1",
@@ -181,13 +182,13 @@
     "update-notifier": "6.0.2",
     "uuid": "9.0.0",
     "wait-port": "1.0.4",
-    "winston": "3.8.2",
-    "write-file-atomic": "5.0.1"
+    "write-file-atomic": "5.0.1",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@babel/preset-react": "7.22.5",
     "@netlify/eslint-config-node": "7.0.0",
-    "@netlify/functions": "1.6.0",
+    "@netlify/functions": "2.0.2",
     "@types/fs-extra": "11.0.1",
     "@types/prettyjson": "0.0.30",
     "@types/semver": "7.5.0",
@@ -214,7 +215,7 @@
     "tomlify-j0.4": "3.0.0",
     "tree-kill": "1.2.2",
     "typescript": "5.1.6",
-    "verdaccio": "5.26.0",
+    "verdaccio": "5.26.2",
     "vitest": "0.33.0"
   },
   "ava": {

@@ -1,7 +1,7 @@
 // @ts-check
 import { Buffer } from 'buffer'
-import { join, relative } from 'path'
-import { env } from 'process'
+import { rm } from 'fs/promises'
+import { join, relative, resolve } from 'path'
 
 // eslint-disable-next-line import/no-namespace
 import * as bundler from '@netlify/edge-bundler'
@@ -13,7 +13,7 @@ import { getPathInProject } from '../settings.mjs'
 import { startSpinner, stopSpinner } from '../spinner.mjs'
 
 import { getBootstrapURL } from './bootstrap.mjs'
-import { DIST_IMPORT_MAP_PATH } from './consts.mjs'
+import { DIST_IMPORT_MAP_PATH, EDGE_FUNCTIONS_SERVE_FOLDER } from './consts.mjs'
 import { headers, getFeatureFlagsHeader, getInvocationMetadataHeader } from './headers.mjs'
 import { getInternalFunctions } from './internal.mjs'
 import { EdgeFunctionsRegistry } from './registry.mjs'
@@ -66,6 +66,7 @@ export const createAccountInfoHeader = (accountInfo = {}) => {
  *
  * @param {object} config
  * @param {*} config.accountId
+ * @param {import("../blobs/blobs.mjs").BlobsContext} config.blobsContext
  * @param {*} config.config
  * @param {*} config.configPath
  * @param {*} config.debug
@@ -78,12 +79,14 @@ export const createAccountInfoHeader = (accountInfo = {}) => {
  * @param {boolean=} config.offline
  * @param {*} config.passthroughPort
  * @param {*} config.projectDir
+ * @param {*} config.settings
  * @param {*} config.siteInfo
  * @param {*} config.state
  * @returns
  */
 export const initializeProxy = async ({
   accountId,
+  blobsContext,
   config,
   configPath,
   debug,
@@ -96,6 +99,7 @@ export const initializeProxy = async ({
   offline,
   passthroughPort,
   projectDir,
+  settings,
   siteInfo,
   state,
 }) => {
@@ -106,6 +110,10 @@ export const initializeProxy = async ({
   } = await getInternalFunctions(projectDir)
   const userFunctionsPath = config.build.edge_functions
   const isolatePort = await getAvailablePort()
+  const buildFeatureFlags = {
+    edge_functions_npm_modules: true,
+  }
+  const runtimeFeatureFlags = ['edge_functions_bootstrap_failure_mode']
 
   // Initializes the server, bootstrapping the Deno CLI and downloading it from
   // the network if needed. We don't want to wait for that to be completed, or
@@ -113,8 +121,10 @@ export const initializeProxy = async ({
   const server = prepareServer({
     config,
     configPath,
+    debug,
     directory: userFunctionsPath,
     env: configEnv,
+    featureFlags: buildFeatureFlags,
     getUpdatedConfig,
     importMaps: [importMap].filter(Boolean),
     inspectSettings,
@@ -143,10 +153,16 @@ export const initializeProxy = async ({
     req.headers[headers.Site] = createSiteInfoHeader(siteInfo)
     req.headers[headers.Account] = createAccountInfoHeader({ id: accountId })
 
+    if (blobsContext?.edgeURL && blobsContext?.token) {
+      req.headers[headers.BlobsInfo] = Buffer.from(
+        JSON.stringify({ url: blobsContext.edgeURL, token: blobsContext.token }),
+      ).toString('base64')
+    }
+
     await registry.initialize()
 
     const url = new URL(req.url, `http://${LOCAL_HOST}:${mainPort}`)
-    const { functionNames, invocationMetadata, orphanedDeclarations } = registry.matchURLPath(url.pathname)
+    const { functionNames, invocationMetadata, orphanedDeclarations } = registry.matchURLPath(url.pathname, req.method)
 
     // If the request matches a config declaration for an Edge Function without
     // a matching function file, we warn the user.
@@ -166,27 +182,19 @@ export const initializeProxy = async ({
       return
     }
 
-    const featureFlags = ['edge_functions_bootstrap_failure_mode']
-    const forwardedHost = `localhost:${passthroughPort}`
-
     req[headersSymbol] = {
-      [headers.FeatureFlags]: getFeatureFlagsHeader(featureFlags),
-      [headers.ForwardedHost]: forwardedHost,
+      [headers.FeatureFlags]: getFeatureFlagsHeader(runtimeFeatureFlags),
+      [headers.ForwardedProtocol]: settings.https ? 'https:' : 'http:',
       [headers.Functions]: functionNames.join(','),
       [headers.InvocationMetadata]: getInvocationMetadataHeader(invocationMetadata),
       [headers.IP]: LOCAL_HOST,
       [headers.Passthrough]: 'passthrough',
+      [headers.PassthroughHost]: `localhost:${passthroughPort}`,
+      [headers.PassthroughProtocol]: 'http:',
     }
 
     if (debug) {
       req[headersSymbol][headers.DebugLogging] = '1'
-    }
-
-    // If we're using a different port for passthrough requests, which is the
-    // case when the CLI is running on HTTPS, use it on the Host header so
-    // that the request URL inside the edge function is something accessible.
-    if (mainPort !== passthroughPort) {
-      req[headersSymbol].host = forwardedHost
     }
 
     return `http://${LOCAL_HOST}:${isolatePort}`
@@ -198,8 +206,10 @@ export const isEdgeFunctionsRequest = (req) => req[headersSymbol] !== undefined
 const prepareServer = async ({
   config,
   configPath,
+  debug,
   directory,
   env: configEnv,
+  featureFlags,
   getUpdatedConfig,
   importMaps,
   inspectSettings,
@@ -213,11 +223,17 @@ const prepareServer = async ({
 
   try {
     const distImportMapPath = getPathInProject([DIST_IMPORT_MAP_PATH])
+    const servePath = resolve(projectDir, getPathInProject([EDGE_FUNCTIONS_SERVE_FOLDER]))
+
+    await rm(servePath, { force: true, recursive: true })
+
     const runIsolate = await bundler.serve({
       ...getDownloadUpdateFunctions(),
+      basePath: projectDir,
       bootstrapURL: getBootstrapURL(),
-      debug: env.NETLIFY_DENO_DEBUG === 'true',
+      debug,
       distImportMapPath: join(projectDir, distImportMapPath),
+      featureFlags,
       formatExportTypeError: (name) =>
         `${NETLIFYDEVERR} ${chalk.red('Failed')} to load Edge Function ${chalk.yellow(
           name,
@@ -227,11 +243,13 @@ const prepareServer = async ({
       importMapPaths,
       inspectSettings,
       port,
+      servePath,
     })
     const registry = new EdgeFunctionsRegistry({
       bundler,
       config,
       configPath,
+      debug,
       directories: [directory].filter(Boolean),
       env: configEnv,
       getUpdatedConfig,
@@ -239,6 +257,7 @@ const prepareServer = async ({
       internalFunctions,
       projectDir,
       runIsolate,
+      servePath,
     })
 
     return registry

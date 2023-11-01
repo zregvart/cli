@@ -3,6 +3,8 @@ import process from 'process'
 
 import build from '@netlify/build'
 
+import { isFeatureFlagEnabled } from '../utils/feature-flags.mjs'
+
 import { getBootstrapURL } from './edge-functions/bootstrap.mjs'
 import { featureFlags as edgeFunctionsFeatureFlags } from './edge-functions/consts.mjs'
 
@@ -45,9 +47,20 @@ export const getBuildOptions = ({
   cwd,
   featureFlags: {
     ...edgeFunctionsFeatureFlags,
+    ...getFeatureFlagsFromSiteInfo(cachedConfig.siteInfo),
     functionsBundlingManifest: true,
   },
   edgeFunctionsBootstrapURL: getBootstrapURL(),
+})
+
+/**
+ * @param {*} siteInfo
+ * @returns {Record<string, any>}
+ */
+const getFeatureFlagsFromSiteInfo = (siteInfo) => ({
+  ...siteInfo.feature_flags,
+  // see https://github.com/netlify/pod-dev-foundations/issues/581#issuecomment-1731022753
+  zisi_golang_use_al2: isFeatureFlagEnabled('cli_golang_use_al2', siteInfo),
 })
 
 /**
